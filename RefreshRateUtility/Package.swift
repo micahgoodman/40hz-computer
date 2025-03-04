@@ -11,7 +11,10 @@ let package = Package(
         .target(
             name: "RefreshRateUtility",
             dependencies: [],
-            path: "."
+            path: ".",
+            resources: [
+                .process("ShortenedPop.aiff")
+            ]
         )
     ]
 )
