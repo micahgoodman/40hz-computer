@@ -3,18 +3,45 @@ import AppKit
 import AVFoundation
 import IOKit
 import IOKit.pwr_mgt
+import CoreGraphics
 
 // Constants
 let PROGRAM_NAME = "click-sound-utility"
 let kIODisplayBrightnessKey = "brightness" as CFString
+
+// Import DisplayServices functions for brightness control (Apple Silicon/macOS 11+)
+@_silgen_name("DisplayServicesCanChangeBrightness")
+func DisplayServicesCanChangeBrightness(_ display: CGDirectDisplayID) -> Bool
+
+@_silgen_name("DisplayServicesBrightnessChanged")
+func DisplayServicesBrightnessChanged(_ display: CGDirectDisplayID, _ brightness: Double)
+
+@_silgen_name("DisplayServicesGetBrightness")
+func DisplayServicesGetBrightness(_ display: CGDirectDisplayID, _ brightness: UnsafeMutablePointer<Float>) -> Int32
+
+@_silgen_name("DisplayServicesSetBrightness")
+func DisplayServicesSetBrightness(_ display: CGDirectDisplayID, _ brightness: Float) -> Int32
+
+// Import CoreDisplay functions for brightness control (older macOS versions)
+@_silgen_name("CoreDisplay_Display_SetUserBrightness")
+func CoreDisplay_Display_SetUserBrightness(_ display: CGDirectDisplayID, _ brightness: Double)
+
+@_silgen_name("CoreDisplay_Display_GetUserBrightness")
+func CoreDisplay_Display_GetUserBrightness(_ display: CGDirectDisplayID) -> Double
+
+// CGDisplayIOServicePort is deprecated but still useful for our purposes
+@_silgen_name("CGDisplayIOServicePort")
+func CGDisplayIOServicePort(_ display: CGDirectDisplayID) -> io_service_t
+
+
 
 // Struct to hold command line arguments
 struct CommandLineOptions {
     var frequency: Double = 60.0
     var showHelp = false
     var enableClick = true
-    var enableBrightnessPulse = true
-    var brightnessAmount: Float = 0.05 // 5% brightness change
+    var increaseBrightness: Float? = nil // Optional value for brightness increase
+    var flashBrightness: Float? = nil // Optional value for brightness flashing
 }
 
 // Function to display usage information
@@ -25,16 +52,16 @@ func printUsage() {
     Options:
       -f <frequency>       Set the clicking sound frequency in Hz (default: 60Hz)
       --no-click           Disable clicking sound
-      --no-brightness      Disable brightness pulsing
-      -b <amount>          Set brightness pulse amount (default: 0.05 or 5%)
+      --increase-bright <amount>  Increase screen brightness by the specified amount (0.0-1.0)
+      --flash-bright <amount>     Flash the screen brightness by the specified amount (0.0-1.0)
       -h, --help           Display this help information
     
     Examples:
-      \(PROGRAM_NAME)                     Play click sound at default 60Hz with brightness pulsing
-      \(PROGRAM_NAME) -f 40              Play click sound at 40Hz with brightness pulsing
-      \(PROGRAM_NAME) -b 0.1             Use 10% brightness pulse with click sound
-      \(PROGRAM_NAME) --no-brightness    Play click sound without brightness pulsing
-      \(PROGRAM_NAME) --no-click         Run without sound or brightness changes
+      \(PROGRAM_NAME)                       Play click sound at default 60Hz
+      \(PROGRAM_NAME) -f 40                Play click sound at 40Hz
+      \(PROGRAM_NAME) --increase-bright 0.1  Increase screen brightness by 10%
+      \(PROGRAM_NAME) --flash-bright 0.1    Flash the screen brightness by 10% with each click
+      \(PROGRAM_NAME) --no-click           Run without sound
     """)
 }
 
@@ -48,8 +75,6 @@ func parseCommandLineArguments() -> CommandLineOptions {
         switch args[i] {
         case "--no-click":
             options.enableClick = false
-        case "--no-brightness":
-            options.enableBrightnessPulse = false
         case "-f", "--frequency":
             if i + 1 < args.count, let frequency = Double(args[i + 1]) {
                 options.frequency = frequency
@@ -58,12 +83,28 @@ func parseCommandLineArguments() -> CommandLineOptions {
                 print("Error: -f requires a frequency value")
                 exit(1)
             }
-        case "-b", "--brightness-amount":
+        case "--increase-bright":
             if i + 1 < args.count, let amount = Float(args[i + 1]) {
-                options.brightnessAmount = amount
+                if amount < 0 || amount > 1 {
+                    print("Error: Brightness increase must be between 0.0 and 1.0")
+                    exit(1)
+                }
+                options.increaseBrightness = amount
                 i += 1
             } else {
-                print("Error: -b requires a decimal value (e.g., 0.05 for 5%)")
+                print("Error: --increase-bright requires a decimal value (e.g., 0.1 for 10%)")
+                exit(1)
+            }
+        case "--flash-bright":
+            if i + 1 < args.count, let amount = Float(args[i + 1]) {
+                if amount < 0 || amount > 1 {
+                    print("Error: Brightness flash amount must be between 0.0 and 1.0")
+                    exit(1)
+                }
+                options.flashBrightness = amount
+                i += 1
+            } else {
+                print("Error: --flash-bright requires a decimal value (e.g., 0.1 for 10%)")
                 exit(1)
             }
         case "-h", "--help":
@@ -86,11 +127,10 @@ let maxRecentSounds = 10
 var enableClickSound: Bool = false
 var clickTimer: Timer?
 
-// Brightness control variables
-var originalBrightness: Float = 0.0
-var enableBrightnessPulse: Bool = true
-var brightnessAmount: Float = 0.05 // 5% brightness change by default
-var isInBrightPhase: Bool = false
+// Brightness flashing variables
+var originalBrightness: Float = 0.5
+var flashBrightnessAmount: Float = 0.0
+var isBrightnessFlashing: Bool = false
 
 // Configuration file path for persisting settings
 let configDirPath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".clicksoundutility")
@@ -110,9 +150,7 @@ func saveConfiguration() {
     
     let config: [String: Any] = [
         "enableClickSound": enableClickSound,
-        "frequency": clickTimer?.timeInterval != nil ? 1.0 / (clickTimer?.timeInterval ?? 1/60) : 60.0,
-        "enableBrightnessPulse": enableBrightnessPulse,
-        "brightnessAmount": brightnessAmount
+        "frequency": clickTimer?.timeInterval != nil ? 1.0 / (clickTimer?.timeInterval ?? 1/60) : 60.0
     ]
     
     do {
@@ -155,13 +193,7 @@ func loadConfiguration() {
             print("Loaded frequency: \(frequency)Hz")
         }
         
-        if let brightnessPulse = config["enableBrightnessPulse"] as? Bool {
-            enableBrightnessPulse = brightnessPulse
-        }
-        
-        if let brightnessValue = config["brightnessAmount"] as? Float {
-            brightnessAmount = brightnessValue
-        }
+        // No more brightness pulse settings to load
         
         print("Configuration loaded from \(configFilePath.path)")
     } catch {
@@ -252,6 +284,23 @@ func playClickSound() {
         if let sound = clickSound {
             // Create a completely new instance for each sound to avoid playback issues
             if let newInstance = sound.copy() as? NSSound {
+                // If brightness flashing is enabled, increase brightness when sound starts
+                if isBrightnessFlashing && flashBrightnessAmount > 0 {
+                    // Get current brightness if we don't have it stored
+                    if originalBrightness <= 0 {
+                        originalBrightness = getCurrentBrightness()
+                    }
+                    
+                    // Calculate the increased brightness (constrained to 0-1 range)
+                    let increasedBrightness = min(1.0, originalBrightness + flashBrightnessAmount)
+                    
+                    // Set the increased brightness
+                    _ = setBrightness(increasedBrightness)
+                }
+                
+                // Set up a delegate to handle when sound finishes playing
+                newInstance.delegate = SoundDelegate.shared
+                
                 // Start playing the new instance
                 newInstance.play()
                 
@@ -268,10 +317,23 @@ func playClickSound() {
             NSSound.beep()
         }
     }
+}
+
+// Sound delegate to handle when sound finishes playing
+class SoundDelegate: NSObject, NSSoundDelegate {
+    static let shared = SoundDelegate()
     
-    // Pulse the brightness with each click sound
-    if enableBrightnessPulse {
-        pulseBrightness()
+    func sound(_ sound: NSSound, didFinishPlaying successfully: Bool) {
+        // If brightness flashing is enabled, restore original brightness when sound finishes
+        if isBrightnessFlashing && flashBrightnessAmount > 0 {
+            // Restore original brightness
+            _ = setBrightness(originalBrightness)
+        }
+        
+        // Remove this sound from our recent sounds array
+        if let index = recentSounds.firstIndex(of: sound) {
+            recentSounds.remove(at: index)
+        }
     }
 }
 
@@ -302,93 +364,163 @@ func stopClickSound() {
     clickTimer?.invalidate()
     clickTimer = nil
     
-    // Restore original brightness if needed
-    if enableBrightnessPulse && originalBrightness > 0 {
-        setBrightness(originalBrightness)
-    }
-    
     // Save the updated configuration
     saveConfiguration()
 }
 
-// Function to get current display brightness
-func getCurrentBrightness() -> Float {
-    var service: io_object_t = 0
+// Helper function to get the IO service port for a display
+func getIOServicePortForDisplay(_ displayID: CGDirectDisplayID) -> io_service_t {
+    var service: io_service_t = 0
     var iterator: io_iterator_t = 0
-    var brightness: Float = 0.5  // Default value if we can't get the actual brightness
     
+    // Try to match IODisplayConnect service
     let result = IOServiceGetMatchingServices(kIOMasterPortDefault, IOServiceMatching("IODisplayConnect"), &iterator)
-    
-    if result == kIOReturnSuccess {
-        service = IOIteratorNext(iterator)
-        
-        if service != 0 {
-            var current: Float = 0
-            
-            // Get the current brightness
-            if IODisplayGetFloatParameter(service, 0, kIODisplayBrightnessKey as CFString, &current) == kIOReturnSuccess {
-                brightness = current
-            }
-            
-            IOObjectRelease(service)
-        }
-        
-        IOObjectRelease(iterator)
+    if result != kIOReturnSuccess {
+        return 0
     }
     
+    // Iterate through all display services
+    service = IOIteratorNext(iterator)
+    while service != 0 {
+        // Get the service for the main display
+        if CGDisplayIOServicePort(displayID) == service {
+            IOObjectRelease(iterator)
+            return service
+        }
+        IOObjectRelease(service)
+        service = IOIteratorNext(iterator)
+    }
+    
+    IOObjectRelease(iterator)
+    return 0
+}
+
+// Function to get current display brightness
+func getCurrentBrightness() -> Float {
+    let mainDisplay = CGMainDisplayID()
+    var brightness: Float = 0.5  // Default value if we can't get the actual brightness
+    
+    // 1. Try DisplayServices API (Apple Silicon/macOS 11+)
+    if let getFunc = unsafeBitCast(DisplayServicesGetBrightness, to: Optional<(CGDirectDisplayID, UnsafeMutablePointer<Float>) -> Int32>.self) {
+        var currentBrightness: Float = 0
+        if getFunc(mainDisplay, &currentBrightness) == 0 {
+            print("Got brightness using DisplayServices API: \(currentBrightness)")
+            return currentBrightness
+        }
+    }
+    
+    // 2. Try CoreDisplay API
+    if let getFunc = unsafeBitCast(CoreDisplay_Display_GetUserBrightness, to: Optional<(CGDirectDisplayID) -> Double>.self) {
+        if let canChangeFunc = unsafeBitCast(DisplayServicesCanChangeBrightness, to: Optional<(CGDirectDisplayID) -> Bool>.self) {
+            if !canChangeFunc(mainDisplay) {
+                print("Display cannot change brightness")
+            } else {
+                let currentBrightness = Float(getFunc(mainDisplay))
+                print("Got brightness using CoreDisplay API: \(currentBrightness)")
+                return currentBrightness
+            }
+        } else {
+            // Try without checking if we can change brightness
+            let currentBrightness = Float(getFunc(mainDisplay))
+            print("Got brightness using CoreDisplay API: \(currentBrightness)")
+            return currentBrightness
+        }
+    }
+    
+    // 3. Fall back to IOKit API
+    let service = getIOServicePortForDisplay(mainDisplay)
+    if service != 0 {
+        var current: Float = 0
+        if IODisplayGetFloatParameter(service, 0, kIODisplayBrightnessKey, &current) == kIOReturnSuccess {
+            brightness = current
+            print("Got brightness using IOKit API: \(brightness)")
+            IOObjectRelease(service)
+            return brightness
+        }
+        IOObjectRelease(service)
+    }
+    
+    print("Warning: Could not get current brightness from any API")
     return brightness
 }
 
 // Function to set display brightness
 func setBrightness(_ brightness: Float) -> Bool {
     let constrainedBrightness = max(0, min(1, brightness))
-    var service: io_object_t = 0
-    var iterator: io_iterator_t = 0
-    var success = false
+    let mainDisplay = CGMainDisplayID()
     
-    let result = IOServiceGetMatchingServices(kIOMasterPortDefault, IOServiceMatching("IODisplayConnect"), &iterator)
-    
-    if result == kIOReturnSuccess {
-        service = IOIteratorNext(iterator)
-        
-        while service != 0 {
-            // Set the brightness
-            if IODisplaySetFloatParameter(service, 0, kIODisplayBrightnessKey as CFString, constrainedBrightness) == kIOReturnSuccess {
-                success = true
-            }
-            
-            IOObjectRelease(service)
-            service = IOIteratorNext(iterator)
+    // 1. Try DisplayServices API (Apple Silicon/macOS 11+)
+    if let setFunc = unsafeBitCast(DisplayServicesSetBrightness, to: Optional<(CGDirectDisplayID, Float) -> Int32>.self) {
+        if setFunc(mainDisplay, constrainedBrightness) == 0 {
+            print("Set brightness using DisplayServices API: \(constrainedBrightness)")
+            return true
         }
-        
-        IOObjectRelease(iterator)
     }
     
-    return success
+    // 2. Try CoreDisplay API
+    if let setFunc = unsafeBitCast(CoreDisplay_Display_SetUserBrightness, to: Optional<(CGDirectDisplayID, Double) -> Void>.self) {
+        if let canChangeFunc = unsafeBitCast(DisplayServicesCanChangeBrightness, to: Optional<(CGDirectDisplayID) -> Bool>.self) {
+            if !canChangeFunc(mainDisplay) {
+                print("Display cannot change brightness")
+            } else {
+                setFunc(mainDisplay, Double(constrainedBrightness))
+                
+                // Notify system about brightness change
+                if let notifyFunc = unsafeBitCast(DisplayServicesBrightnessChanged, to: Optional<(CGDirectDisplayID, Double) -> Void>.self) {
+                    notifyFunc(mainDisplay, Double(constrainedBrightness))
+                }
+                
+                print("Set brightness using CoreDisplay API: \(constrainedBrightness)")
+                return true
+            }
+        } else {
+            // Try without checking if we can change brightness
+            setFunc(mainDisplay, Double(constrainedBrightness))
+            print("Set brightness using CoreDisplay API: \(constrainedBrightness)")
+            return true
+        }
+    }
+    
+    // 3. Fall back to IOKit API
+    let service = getIOServicePortForDisplay(mainDisplay)
+    if service != 0 {
+        let result = IODisplaySetFloatParameter(service, 0, kIODisplayBrightnessKey, constrainedBrightness)
+        IOObjectRelease(service)
+        
+        if result == kIOReturnSuccess {
+            print("Set brightness using IOKit API: \(constrainedBrightness)")
+            return true
+        } else {
+            print("Failed to set brightness using IOKit API: error \(result)")
+        }
+    }
+    
+    print("Warning: Could not set brightness using any API")
+    return false
 }
 
-// Function to pulse brightness along with click sound
-func pulseBrightness() {
-    if !enableBrightnessPulse {
-        return
-    }
+
+
+// Function to increase the screen brightness by a specified amount
+func increaseBrightness(amount: Float) -> Bool {
+    // Get current brightness
+    let currentBrightness = getCurrentBrightness()
+    print("Current brightness: \(currentBrightness * 100)%")
     
-    // Save the original brightness the first time
-    if originalBrightness == 0 {
-        originalBrightness = getCurrentBrightness()
-        print("Original brightness: \(originalBrightness * 100)%")
-    }
+    // Calculate new brightness level (constrained to 0-1 range)
+    let newBrightness = min(1.0, currentBrightness + amount)
     
-    // Toggle between original and increased brightness
-    if isInBrightPhase {
-        // Return to original brightness
-        setBrightness(originalBrightness)
-        isInBrightPhase = false
+    // Set the new brightness
+    let success = setBrightness(newBrightness)
+    
+    if success {
+        print("Brightness increased from \(currentBrightness * 100)% to \(newBrightness * 100)%")
+        return true
     } else {
-        // Increase brightness
-        let newBrightness = min(1.0, originalBrightness + brightnessAmount)
-        setBrightness(newBrightness)
-        isInBrightPhase = true
+        print("Failed to increase brightness")
+        print("Note: On some Macs, brightness control requires special permissions or may not be supported.")
+        print("You might need to run this command with sudo privileges.")
+        return false
     }
 }
 
@@ -397,19 +529,51 @@ func main() {
     // Load saved configuration
     loadConfiguration()
     
-    let options = parseCommandLineArguments()
+    var options = parseCommandLineArguments()
     
     if options.showHelp {
         printUsage()
         exit(0)
     }
     
+    // Check if we need to increase brightness
+    if let brightnessAmount = options.increaseBrightness {
+        let success = increaseBrightness(amount: brightnessAmount)
+        if !success {
+            print("Warning: Failed to increase brightness. This might be due to:")
+            print("  - Your Mac model not supporting this method of brightness control")
+            print("  - Insufficient permissions (try running with sudo)")
+            print("  - System security settings preventing display brightness changes")
+        }
+        
+        // If we're only adjusting brightness and not playing sound, exit now
+        if !options.enableClick && options.flashBrightness == nil {
+            exit(success ? 0 : 1)
+        }
+    }
+    
+    // Set up brightness flashing if requested
+    if let flashAmount = options.flashBrightness {
+        // Store the original brightness
+        originalBrightness = getCurrentBrightness()
+        print("Original brightness: \(originalBrightness * 100)%")
+        
+        // Set the flash amount
+        flashBrightnessAmount = flashAmount
+        isBrightnessFlashing = true
+        
+        print("Brightness will flash by \(flashAmount * 100)% with each click")
+        
+        // If we're only flashing brightness and not playing sound, enable click sound
+        if !options.enableClick {
+            print("Enabling click sound for brightness flashing")
+            options.enableClick = true
+            enableClickSound = true
+        }
+    }
+    
     // Set click sound state from command line
     enableClickSound = options.enableClick
-    
-    // Set brightness pulse state from command line
-    enableBrightnessPulse = options.enableBrightnessPulse
-    brightnessAmount = options.brightnessAmount
     
     if enableClickSound {
         setupClickSound()
@@ -419,24 +583,21 @@ func main() {
     let frequency = options.frequency
     startClickTimer(frequency: frequency)
     
-    if enableClickSound {
-        print("\nRunning with click sound at \(frequency)Hz")
-        
-        if enableBrightnessPulse {
-            print("Brightness pulsing enabled (\(brightnessAmount * 100)% change)")
-            // Store original brightness at startup
-            originalBrightness = getCurrentBrightness()
-            print("Original brightness: \(originalBrightness * 100)%")
-        } else {
-            print("Brightness pulsing disabled")
-        }
-        
+    if enableClickSound || isBrightnessFlashing {
+        print("\nRunning with \(enableClickSound ? "click sound" : "")\(enableClickSound && isBrightnessFlashing ? " and " : "")\(isBrightnessFlashing ? "brightness flashing" : "") at \(frequency)Hz")
         print("Press Ctrl+C to exit")
         
         // Set up a signal handler for clean exit
         signal(SIGINT) { _ in
             print("\nShutting down...")
             stopClickSound()
+            
+            // Restore original brightness if we were flashing
+            if isBrightnessFlashing {
+                _ = setBrightness(originalBrightness)
+                print("Restored original brightness: \(originalBrightness * 100)%")
+            }
+            
             exit(0)
         }
         

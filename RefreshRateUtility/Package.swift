@@ -14,6 +14,14 @@ let package = Package(
             path: ".",
             resources: [
                 .process("ShortenedPop.aiff")
+            ],
+            linkerSettings: [
+                .linkedFramework("CoreGraphics"),
+                .unsafeFlags([
+                    "-F", "/System/Library/PrivateFrameworks",
+                    "-framework", "CoreDisplay",
+                    "-framework", "DisplayServices"
+                ])
             ]
         )
     ]
