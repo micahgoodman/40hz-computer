@@ -452,7 +452,6 @@ func setBrightness(_ brightness: Float) -> Bool {
     // 1. Try DisplayServices API (Apple Silicon/macOS 11+)
     if let setFunc = unsafeBitCast(DisplayServicesSetBrightness, to: Optional<(CGDirectDisplayID, Float) -> Int32>.self) {
         if setFunc(mainDisplay, constrainedBrightness) == 0 {
-            print("Set brightness using DisplayServices API: \(constrainedBrightness)")
             return true
         }
     }

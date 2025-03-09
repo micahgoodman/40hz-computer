@@ -2,14 +2,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "RefreshRateUtility",
+    name: "40HzLaptop",
     platforms: [
         .macOS(.v10_13)
     ],
     dependencies: [],
     targets: [
         .target(
-            name: "RefreshRateUtility",
+            name: "40HzLaptop",
             dependencies: [],
             path: ".",
             resources: [
