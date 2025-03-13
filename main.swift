@@ -37,7 +37,7 @@ func CGDisplayIOServicePort(_ display: CGDirectDisplayID) -> io_service_t
 
 // Struct to hold command line arguments
 struct CommandLineOptions {
-    var frequency: Double = 60.0
+    var frequency: Double = 40.0
     var showHelp = false
     var enableClick = true
     var increaseBrightness: Float? = nil // Optional value for brightness increase
@@ -50,14 +50,14 @@ func printUsage() {
     Usage: \(PROGRAM_NAME) [options]
     
     Options:
-      -f <frequency>       Set the clicking sound frequency in Hz (default: 60Hz)
+      -f <frequency>       Set the clicking sound frequency in Hz (default: 40Hz)
       --no-click           Disable clicking sound
       --increase-bright <amount>  Increase screen brightness by the specified amount (0.0-1.0)
       --flash-bright <amount>     Flash the screen brightness by the specified amount (0.0-1.0)
       -h, --help           Display this help information
     
     Examples:
-      \(PROGRAM_NAME)                       Play click sound at default 60Hz
+      \(PROGRAM_NAME)                       Play click sound at default 40Hz
       \(PROGRAM_NAME) -f 40                Play click sound at 40Hz
       \(PROGRAM_NAME) --increase-bright 0.1  Increase screen brightness by 10%
       \(PROGRAM_NAME) --flash-bright 0.1    Flash the screen brightness by 10% with each click
@@ -150,7 +150,7 @@ func saveConfiguration() {
     
     let config: [String: Any] = [
         "enableClickSound": enableClickSound,
-        "frequency": clickTimer?.timeInterval != nil ? 1.0 / (clickTimer?.timeInterval ?? 1/60) : 60.0
+        "frequency": clickTimer?.timeInterval != nil ? 1.0 / (clickTimer?.timeInterval ?? 1/60) : 40.0
     ]
     
     do {

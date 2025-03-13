@@ -1,74 +1,57 @@
-# Display Refresh Rate Utility
+# 40Hz Computer Utility
 
-A simple macOS command-line utility for viewing and changing display refresh rates.
-
-## Features
-
-- List all connected displays with their current refresh rates
-- Show available refresh rates for each display
-- Set a specific refresh rate for any connected display
-
-## Requirements
-
-- macOS 10.13 or later
-- Xcode 10.0 or later (for building from source)
-
-## Installation
-
-### Building from Source
-
-1. Clone this repository:
-   ```
-   git clone https://github.com/yourusername/refresh-rate-utility.git
-   cd refresh-rate-utility
-   ```
-
-2. Build the project:
-   ```
-   swift build -c release
-   ```
-
-3. Copy the binary to a location in your PATH:
-   ```
-   cp .build/release/refresh-rate /usr/local/bin/
-   ```
+A simple utility for generating 40Hz clicks/flashes on a computer.
 
 ## Usage
 
 ```
-Usage: refresh-rate [options]
+Usage: swift run 40HzLaptop [options]
 
 Options:
-  -l                   List all connected displays and their current refresh rates
-  -d <display_id>      Specify which display to target (use ID from -l output)
-  -r <refresh_rate>    Set the specified refresh rate in Hz (e.g., 60, 120)
-  -h                   Display this help information
+  -f <frequency>       Set the clicking sound frequency in Hz (default: 40Hz)
+  --no-click           Disable clicking sound
+  --increase-bright <amount>  Increase screen brightness by the specified amount (0.0-1.0)
+  --flash-bright <amount>     Flash the screen brightness by the specified amount (0.0-1.0)
+  -h, --help           Display this help information
 
 Examples:
-  refresh-rate -l                     List all displays
-  refresh-rate -d 1 -r 60             Set display 1 to 60Hz refresh rate
+  swift run 40HzLaptop                       Play click sound at default 40Hz
+  swift run 40HzLaptop -f 40                 Play click sound at 40Hz
+  swift run 40HzLaptop --increase-bright 0.1 Increase screen brightness by 10%
+  swift run 40HzLaptop --flash-bright 0.1    Flash the screen brightness by 10% with each click
+  swift run 40HzLaptop --no-click            Run without sound
 ```
 
 ## Examples
 
-### List all displays and their refresh rates
+### Generate auditory clicks at 40Hz
 
 ```
-$ refresh-rate -l
+swift run 40HzLaptop -f 40
 ```
 
-This will show all connected displays with their current resolution and refresh rate, plus a list of all available refresh rates for each display.
+This will generate auditory clicks at 40Hz frequency until interrupted with Ctrl+C.
 
-### Set a display to a specific refresh rate
+### Flash the screen brightness with each click
 
 ```
-$ refresh-rate -d 1 -r 60
+swift run 40HzLaptop --flash-bright 0.2
 ```
 
-This sets display ID 1 to a 60Hz refresh rate.
+This flashes the screen brightness by 20% with each click at the default 40Hz frequency.
 
-## Notes
+### Combine auditory clicks and visual flashes at 40Hz
 
-- Not all displays support changing refresh rates
-- Some displays won't support all refresh rates 
-- Some refresh rates may only be available at specific resolutions
+```
+swift run 40HzLaptop -f 40 --flash-bright 0.1
+```
+
+This generates both 40Hz auditory clicks and visual flashes (10% brightness change) simultaneously.
+
+### Increase screen brightness without sound
+
+```
+swift run 40HzLaptop --increase-bright 0.3 --no-click
+```
+
+This increases the screen brightness by 30% without playing any click sounds.
