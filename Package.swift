@@ -12,6 +12,10 @@ let package = Package(
             name: "40HzLaptop",
             dependencies: [],
             path: ".",
+            exclude: [
+                "README.md",
+                "Frameworks"
+            ],
             resources: [
                 .process("ShortenedPop.aiff")
             ],

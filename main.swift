@@ -13,9 +13,6 @@ let kIODisplayBrightnessKey = "brightness" as CFString
 @_silgen_name("DisplayServicesCanChangeBrightness")
 func DisplayServicesCanChangeBrightness(_ display: CGDirectDisplayID) -> Bool
 
-@_silgen_name("DisplayServicesBrightnessChanged")
-func DisplayServicesBrightnessChanged(_ display: CGDirectDisplayID, _ brightness: Double)
-
 @_silgen_name("DisplayServicesGetBrightness")
 func DisplayServicesGetBrightness(_ display: CGDirectDisplayID, _ brightness: UnsafeMutablePointer<Float>) -> Int32
 
@@ -463,11 +460,6 @@ func setBrightness(_ brightness: Float) -> Bool {
                 print("Display cannot change brightness")
             } else {
                 setFunc(mainDisplay, Double(constrainedBrightness))
-                
-                // Notify system about brightness change
-                if let notifyFunc = unsafeBitCast(DisplayServicesBrightnessChanged, to: Optional<(CGDirectDisplayID, Double) -> Void>.self) {
-                    notifyFunc(mainDisplay, Double(constrainedBrightness))
-                }
                 
                 print("Set brightness using CoreDisplay API: \(constrainedBrightness)")
                 return true
